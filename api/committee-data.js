@@ -104,7 +104,6 @@ export default async function handler(req, res) {
       const usersSnap = await adminDb.collection('users').get();
       const wasteLogsSnap = await adminDb.collectionGroup('wasteLogs').get();
 
-      // รวมยอดขยะ+แต้ม แยกตาม uid
       const wasteByUid = {};
       wasteLogsSnap.forEach(d => {
         const uid = d.ref.parent.parent.id;
@@ -121,7 +120,7 @@ export default async function handler(req, res) {
       const participants = [];
       usersSnap.forEach(doc => {
         const uid = doc.id;
-        if (!wasteByUid[uid]) return; // เอาเฉพาะคนที่มีข้อมูลขยะจริง
+        if (!wasteByUid[uid]) return;
         const u = doc.data();
         participants.push({
           uid,
@@ -137,7 +136,6 @@ export default async function handler(req, res) {
         });
       });
 
-      // สรุปยอดรวมแยกจังหวัด (ใช้ทำกราฟ)
       const provinceAmountSummary = {};
       participants.forEach(p => {
         provinceAmountSummary[p.province] = (provinceAmountSummary[p.province] || 0) + p.totalAmount;
@@ -150,7 +148,6 @@ export default async function handler(req, res) {
       if (!hasPermission(payload.permissions, 'wasteToWealth')) {
         return res.status(403).json({ error: 'ไม่มีสิทธิ์แก้ไขข้อมูลนี้' });
       }
-      // แก้ไขข้อมูลที่อยู่ของผู้เข้าร่วม (จุดที่คณะทำงานแก้ไขได้จริงตอนนี้)
       await adminDb.collection('users').doc(uid).update({
         'address.prov': data.province,
         'address.dist': data.district,
@@ -159,11 +156,170 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true });
     }
 
-    return res.status(400).json({ error: 'ไม่รู้จัก action นี้' });
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
-}
+    // ================= Well Well Well =================
+
+    if (action === 'www-list') {
+      if (!hasPermission(payload.permissions, 'wellWellWell')) {
+        return res.status(403).json({ error: 'ไม่มีสิทธิ์เข้าถึงข้อมูลนี้' });
+      }
+
+      const usersSnap = await adminDb.collection('users').get();
+      const participants = [];
+
+      usersSnap.forEach(doc => {
+        const u = doc.data();
+        if (!u.wwwRegistration) return;
+
+        participants.push({
+          uid: doc.id,
+          name: u.name || 'ไม่ระบุชื่อ',
+          memberId: u.memberId || '-',
+          province: u.address?.prov || '-',
+          age: u.age ?? null,
+          registeredAt: u.wwwRegistration?.registeredAt
+            ? u.wwwRegistration.registeredAt.toDate().toISOString()
+            : null
+        });
+      });
+
+      return res.status(200).json({ participants });
+    }
+
+    if (action === 'www-detail') {
+      if (!hasPermission(payload.permissions, 'wellWellWell')) {
+        return res.status(403).json({ error: 'ไม่มีสิทธิ์เข้าถึงข้อมูลนี้' });
+      }
+
+      const userDoc = await adminDb.collection('users').doc(uid).get();
+      if (!userDoc.exists) return res.status(404).json({ error: 'ไม่พบข้อมูลสมาชิก' });
+      const u = userDoc.data();
+
+      const [healthSnap, sleepSnap, mealSnap] = await Promise.all([
+        adminDb.collection('users').doc(uid).collection('healthLogs').orderBy('createdAt', 'desc').get(),
+        adminDb.collection('users').doc(uid).collection('sleepLogs').orderBy('createdAt', 'desc').limit(30).get(),
+        adminDb.collection('users').doc(uid).collection('mealLogs').orderBy('createdAt', 'desc').limit(30).get()
+      ]);
+
+      const healthLogs = [];
+      healthSnap.forEach(d => {
+        const h = d.data();
+        healthLogs.push({
+          id: d.id,
+          createdAt: h.createdAt?.toDate ? h.createdAt.toDate().toISOString() : null,
+          weight: h.weight ?? null,
+          height: h.height ?? null,
+          bmi: h.bmi ?? null,
+          bloodPressure: h.bloodPressure ?? null,
+          cvRisk: h.cvRisk ?? null,
+          tdee: h.tdee ?? null
+        });
+      });
+
+      const sleepLogs = [];
+      sleepSnap.forEach(d => {
+        const s = d.data();
+        sleepLogs.push({
+          date: s.date || (s.createdAt?.toDate ? s.createdAt.toDate().toISOString().slice(0, 10) : null),
+          hours: s.hours ?? s.sleepHours ?? null
+        });
+      });
+
+      const mealLogs = [];
+      mealSnap.forEach(d => {
+        const m = d.data();
+        mealLogs.push({
+          date: m.date || (m.createdAt?.toDate ? m.createdAt.toDate().toISOString().slice(0, 10) : null),
+          calories: m.calories ?? null,
+          mealName: m.mealName || m.name || '-'
+        });
+      });
+
+      return res.status(200).json({
+        name: u.name || 'ไม่ระบุชื่อ',
+        memberId: u.memberId || '-',
+        province: u.address?.prov || '-',
+        age: u.age ?? null,
+        healthLogs,
+        sleepLogs: sleepLogs.reverse(),
+        mealLogs: mealLogs.reverse()
+      });
+    }
+
+    // ================= บันทึกสุขภาพ =================
+
+    if (action === 'health-list') {
+      if (!hasPermission(payload.permissions, 'health')) {
+        return res.status(403).json({ error: 'ไม่มีสิทธิ์เข้าถึงข้อมูลนี้' });
+      }
+
+      const usersSnap = await adminDb.collection('users').get();
+      const healthLogsSnap = await adminDb.collectionGroup('healthLogs').get();
+
+      const summaryByUid = {};
+      healthLogsSnap.forEach(d => {
+        const uid = d.ref.parent.parent.id;
+        const log = d.data();
+        if (!summaryByUid[uid]) summaryByUid[uid] = { logCount: 0, lastLogAt: null };
+        summaryByUid[uid].logCount += 1;
+        const logDate = log.createdAt?.toDate ? log.createdAt.toDate() : null;
+        if (logDate && (!summaryByUid[uid].lastLogAt || logDate > summaryByUid[uid].lastLogAt)) {
+          summaryByUid[uid].lastLogAt = logDate;
+        }
+      });
+
+      const participants = [];
+      usersSnap.forEach(doc => {
+        const uid = doc.id;
+        if (!summaryByUid[uid]) return;
+        const u = doc.data();
+        participants.push({
+          uid,
+          name: u.name || 'ไม่ระบุชื่อ',
+          memberId: u.memberId || '-',
+          province: u.address?.prov || '-',
+          age: u.age ?? null,
+          logCount: summaryByUid[uid].logCount,
+          lastLogAt: summaryByUid[uid].lastLogAt ? summaryByUid[uid].lastLogAt.toISOString() : null
+        });
+      });
+
+      return res.status(200).json({ participants });
+    }
+
+    if (action === 'health-detail') {
+      if (!hasPermission(payload.permissions, 'health')) {
+        return res.status(403).json({ error: 'ไม่มีสิทธิ์เข้าถึงข้อมูลนี้' });
+      }
+
+      const userDoc = await adminDb.collection('users').doc(uid).get();
+      if (!userDoc.exists) return res.status(404).json({ error: 'ไม่พบข้อมูลสมาชิก' });
+      const u = userDoc.data();
+
+      const healthSnap = await adminDb.collection('users').doc(uid).collection('healthLogs').orderBy('createdAt', 'desc').get();
+
+      const healthLogs = [];
+      healthSnap.forEach(d => {
+        const h = d.data();
+        healthLogs.push({
+          id: d.id,
+          createdAt: h.createdAt?.toDate ? h.createdAt.toDate().toISOString() : null,
+          weight: h.weight ?? null,
+          height: h.height ?? null,
+          bmi: h.bmi ?? null,
+          bloodPressure: h.bloodPressure ?? null,
+          cvRisk: h.cvRisk ?? null,
+          tdee: h.tdee ?? null
+        });
+      });
+
+      return res.status(200).json({
+        name: u.name || 'ไม่ระบุชื่อ',
+        memberId: u.memberId || '-',
+        province: u.address?.prov || '-',
+        age: u.age ?? null,
+        healthLogs
+      });
+    }
 
     // ================= ห้องสมุด =================
 
@@ -173,10 +329,6 @@ export default async function handler(req, res) {
       }
 
       const usersSnap = await adminDb.collection('users').get();
-      const branchesSnap = await adminDb.collection('libraryBranches').get();
-
-      const branchNames = {};
-      branchesSnap.forEach(d => { branchNames[d.id] = d.data().branchName; });
 
       const participants = [];
       const branchCount = {};
@@ -201,3 +353,9 @@ export default async function handler(req, res) {
 
       return res.status(200).json({ participants, branchCount });
     }
+
+    return res.status(400).json({ error: 'ไม่รู้จัก action นี้' });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+}
