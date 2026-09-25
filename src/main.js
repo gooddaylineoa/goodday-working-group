@@ -1,3 +1,7 @@
+// ============================================================
+// ฟังก์ชันพื้นฐาน
+// ============================================================
+
 function showToast(message, type = 'info') {
   const container = document.getElementById('toast-container');
   const colors = { success: 'bg-emerald-500', error: 'bg-rose-500', info: 'bg-blue-500' };
@@ -114,7 +118,9 @@ function switchModule(name) {
   else if (name === 'library') loadLibraryModule();
 }
 
-// ================= Dashboard ภาพรวม =================
+// ============================================================
+// Dashboard ภาพรวม
+// ============================================================
 
 let dashCharts = {};
 let dashboardStatsCache = null;
@@ -238,7 +244,9 @@ function renderLibraryBranchChart(libraryBranchCount) {
   });
 }
 
-// ================= Waste to Wealth =================
+// ============================================================
+// Waste to Wealth
+// ============================================================
 
 let allWasteParticipants = [];
 let wasteCharts = {};
@@ -357,7 +365,9 @@ document.getElementById('btn-save-waste-edit').onclick = async () => {
   }
 };
 
-// ================= Well Well Well =================
+// ============================================================
+// Well Well Well
+// ============================================================
 
 let allWWWParticipants = [];
 let wwwCharts = {};
@@ -493,177 +503,9 @@ async function openWWWDetail(uid) {
 
 document.getElementById('btn-back-www-detail').onclick = () => switchModule('www');
 
-    // ================= Well Well Well =================
-
-    if (action === 'www-list') {
-      if (!hasPermission(payload.permissions, 'wellWellWell')) {
-        return res.status(403).json({ error: 'ไม่มีสิทธิ์เข้าถึงข้อมูลนี้' });
-      }
-
-      const usersSnap = await adminDb.collection('users').get();
-      const participants = [];
-
-      usersSnap.forEach(doc => {
-        const u = doc.data();
-        // 🔶 สมมติฐาน: เข้าร่วม Well Well Well เช็คจาก field นี้ — แก้ให้ตรงจริงได้
-        if (!u.wwwRegistration) return;
-
-        participants.push({
-          uid: doc.id,
-          name: u.name || 'ไม่ระบุชื่อ',
-          memberId: u.memberId || '-',
-          province: u.address?.prov || '-',
-          age: u.age ?? null,
-          registeredAt: u.wwwRegistration?.registeredAt
-            ? u.wwwRegistration.registeredAt.toDate().toISOString()
-            : null
-        });
-      });
-
-      return res.status(200).json({ participants });
-    }
-
-    if (action === 'www-detail') {
-      if (!hasPermission(payload.permissions, 'wellWellWell')) {
-        return res.status(403).json({ error: 'ไม่มีสิทธิ์เข้าถึงข้อมูลนี้' });
-      }
-
-      const userDoc = await adminDb.collection('users').doc(uid).get();
-      if (!userDoc.exists) return res.status(404).json({ error: 'ไม่พบข้อมูลสมาชิก' });
-      const u = userDoc.data();
-
-      const [healthSnap, sleepSnap, mealSnap] = await Promise.all([
-        adminDb.collection('users').doc(uid).collection('healthLogs').orderBy('createdAt', 'desc').get(),
-        adminDb.collection('users').doc(uid).collection('sleepLogs').orderBy('createdAt', 'desc').limit(30).get(),
-        adminDb.collection('users').doc(uid).collection('mealLogs').orderBy('createdAt', 'desc').limit(30).get()
-      ]);
-
-      const healthLogs = [];
-      healthSnap.forEach(d => {
-        const h = d.data();
-        healthLogs.push({
-          id: d.id,
-          createdAt: h.createdAt?.toDate ? h.createdAt.toDate().toISOString() : null,
-          // 🔶 สมมติฐาน: field ผลลัพธ์แบบฟอร์มสุขภาพ — แก้ให้ตรงจริงได้
-          weight: h.weight ?? null,
-          height: h.height ?? null,
-          bmi: h.bmi ?? null,
-          bloodPressure: h.bloodPressure ?? null,
-          cvRisk: h.cvRisk ?? null,
-          tdee: h.tdee ?? null
-        });
-      });
-
-      const sleepLogs = [];
-      sleepSnap.forEach(d => {
-        const s = d.data();
-        sleepLogs.push({
-          date: s.date || (s.createdAt?.toDate ? s.createdAt.toDate().toISOString().slice(0, 10) : null),
-          // 🔶 สมมติฐาน: ชั่วโมงนอน
-          hours: s.hours ?? s.sleepHours ?? null
-        });
-      });
-
-      const mealLogs = [];
-      mealSnap.forEach(d => {
-        const m = d.data();
-        mealLogs.push({
-          date: m.date || (m.createdAt?.toDate ? m.createdAt.toDate().toISOString().slice(0, 10) : null),
-          // 🔶 สมมติฐาน: แคลอรี่ที่กิน
-          calories: m.calories ?? null,
-          mealName: m.mealName || m.name || '-'
-        });
-      });
-
-      return res.status(200).json({
-        name: u.name || 'ไม่ระบุชื่อ',
-        memberId: u.memberId || '-',
-        province: u.address?.prov || '-',
-        age: u.age ?? null,
-        healthLogs,
-        sleepLogs: sleepLogs.reverse(),
-        mealLogs: mealLogs.reverse()
-      });
-    }
-
-        // ================= บันทึกสุขภาพ =================
-
-    if (action === 'health-list') {
-      if (!hasPermission(payload.permissions, 'health')) {
-        return res.status(403).json({ error: 'ไม่มีสิทธิ์เข้าถึงข้อมูลนี้' });
-      }
-
-      const usersSnap = await adminDb.collection('users').get();
-      const healthLogsSnap = await adminDb.collectionGroup('healthLogs').get();
-
-      const summaryByUid = {};
-      healthLogsSnap.forEach(d => {
-        const uid = d.ref.parent.parent.id;
-        const log = d.data();
-        if (!summaryByUid[uid]) summaryByUid[uid] = { logCount: 0, lastLogAt: null };
-        summaryByUid[uid].logCount += 1;
-        const logDate = log.createdAt?.toDate ? log.createdAt.toDate() : null;
-        if (logDate && (!summaryByUid[uid].lastLogAt || logDate > summaryByUid[uid].lastLogAt)) {
-          summaryByUid[uid].lastLogAt = logDate;
-        }
-      });
-
-      const participants = [];
-      usersSnap.forEach(doc => {
-        const uid = doc.id;
-        if (!summaryByUid[uid]) return; // เอาเฉพาะคนที่เคยกรอกจริง
-        const u = doc.data();
-        participants.push({
-          uid,
-          name: u.name || 'ไม่ระบุชื่อ',
-          memberId: u.memberId || '-',
-          province: u.address?.prov || '-',
-          age: u.age ?? null,
-          logCount: summaryByUid[uid].logCount,
-          lastLogAt: summaryByUid[uid].lastLogAt ? summaryByUid[uid].lastLogAt.toISOString() : null
-        });
-      });
-
-      return res.status(200).json({ participants });
-    }
-
-    if (action === 'health-detail') {
-      if (!hasPermission(payload.permissions, 'health')) {
-        return res.status(403).json({ error: 'ไม่มีสิทธิ์เข้าถึงข้อมูลนี้' });
-      }
-
-      const userDoc = await adminDb.collection('users').doc(uid).get();
-      if (!userDoc.exists) return res.status(404).json({ error: 'ไม่พบข้อมูลสมาชิก' });
-      const u = userDoc.data();
-
-      const healthSnap = await adminDb.collection('users').doc(uid).collection('healthLogs').orderBy('createdAt', 'desc').get();
-
-      const healthLogs = [];
-      healthSnap.forEach(d => {
-        const h = d.data();
-        healthLogs.push({
-          id: d.id,
-          createdAt: h.createdAt?.toDate ? h.createdAt.toDate().toISOString() : null,
-          // 🔶 สมมติฐาน field ผลลัพธ์แบบฟอร์มสุขภาพ — แก้ให้ตรงจริงได้
-          weight: h.weight ?? null,
-          height: h.height ?? null,
-          bmi: h.bmi ?? null,
-          bloodPressure: h.bloodPressure ?? null,
-          cvRisk: h.cvRisk ?? null,
-          tdee: h.tdee ?? null
-        });
-      });
-
-      return res.status(200).json({
-        name: u.name || 'ไม่ระบุชื่อ',
-        memberId: u.memberId || '-',
-        province: u.address?.prov || '-',
-        age: u.age ?? null,
-        healthLogs
-      });
-    }
-
-// ================= บันทึกสุขภาพ =================
+// ============================================================
+// บันทึกสุขภาพ
+// ============================================================
 
 let allHealthParticipants = [];
 
@@ -765,7 +607,9 @@ async function openHealthDetail(uid) {
 
 document.getElementById('btn-back-health-detail').onclick = () => switchModule('health');
 
-// ================= ห้องสมุด =================
+// ============================================================
+// ห้องสมุด
+// ============================================================
 
 let allLibraryParticipants = [];
 let libraryDetailChart = null;
