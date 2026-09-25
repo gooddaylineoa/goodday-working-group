@@ -164,3 +164,40 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: err.message });
   }
 }
+
+    // ================= ห้องสมุด =================
+
+    if (action === 'library-list') {
+      if (!hasPermission(payload.permissions, 'library')) {
+        return res.status(403).json({ error: 'ไม่มีสิทธิ์เข้าถึงข้อมูลนี้' });
+      }
+
+      const usersSnap = await adminDb.collection('users').get();
+      const branchesSnap = await adminDb.collection('libraryBranches').get();
+
+      const branchNames = {};
+      branchesSnap.forEach(d => { branchNames[d.id] = d.data().branchName; });
+
+      const participants = [];
+      const branchCount = {};
+
+      usersSnap.forEach(doc => {
+        const u = doc.data();
+        if (!u.libraryMember?.joined) return;
+
+        const branchName = u.libraryMember.branchName || 'ไม่ระบุสาขา';
+        branchCount[branchName] = (branchCount[branchName] || 0) + 1;
+
+        participants.push({
+          uid: doc.id,
+          name: u.name || 'ไม่ระบุชื่อ',
+          memberId: u.memberId || '-',
+          cardId: u.libraryMember.cardId || '-',
+          branchName,
+          province: u.libraryMember.province || '-',
+          joinedAt: u.libraryMember.joinedAt?.toDate ? u.libraryMember.joinedAt.toDate().toISOString() : null
+        });
+      });
+
+      return res.status(200).json({ participants, branchCount });
+    }

@@ -111,6 +111,7 @@ function switchModule(name) {
   else if (name === 'waste') loadWaste();
   else if (name === 'www') loadWWW();
   else if (name === 'health') loadHealth();
+  else if (name === 'library') loadLibraryModule();
 }
 
 // ================= Dashboard ภาพรวม =================
@@ -763,3 +764,63 @@ async function openHealthDetail(uid) {
 }
 
 document.getElementById('btn-back-health-detail').onclick = () => switchModule('health');
+
+// ================= ห้องสมุด =================
+
+let allLibraryParticipants = [];
+let libraryDetailChart = null;
+
+async function loadLibraryModule() {
+  try {
+    const { participants, branchCount } = await callCommitteeApi('library-list');
+    allLibraryParticipants = participants;
+
+    document.getElementById('library-total-participants').innerText = participants.length.toLocaleString();
+
+    const topBranch = Object.entries(branchCount).sort((a, b) => b[1] - a[1])[0];
+    document.getElementById('library-top-branch').innerText = topBranch ? topBranch[0] : '-';
+
+    if (libraryDetailChart) libraryDetailChart.destroy();
+    const entries = Object.entries(branchCount).sort((a, b) => b[1] - a[1]);
+    libraryDetailChart = new Chart(document.getElementById('chart-library-detail'), {
+      type: 'bar',
+      data: { labels: entries.map(([b]) => b), datasets: [{ data: entries.map(([, v]) => v), backgroundColor: '#3b82f6' }] },
+      options: { plugins: { legend: { display: false } } }
+    });
+
+    const branches = [...new Set(participants.map(p => p.branchName))];
+    document.getElementById('library-branch-filter').innerHTML =
+      '<option value="">ทุกสาขา</option>' + branches.map(b => `<option value="${b}">${b}</option>`).join('');
+
+    renderLibraryTable();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+document.getElementById('library-search').oninput = () => renderLibraryTable();
+document.getElementById('library-branch-filter').onchange = () => renderLibraryTable();
+
+function renderLibraryTable() {
+  const term = document.getElementById('library-search').value.trim().toLowerCase();
+  const branchFilter = document.getElementById('library-branch-filter').value;
+
+  let filtered = allLibraryParticipants;
+  if (term) {
+    filtered = filtered.filter(p => p.name.toLowerCase().includes(term) || p.memberId.toLowerCase().includes(term));
+  }
+  if (branchFilter) {
+    filtered = filtered.filter(p => p.branchName === branchFilter);
+  }
+
+  document.getElementById('library-table-body').innerHTML = filtered.map(p => `
+    <tr class="border-t border-gray-100">
+      <td class="p-3 font-bold text-gray-800">${p.name}</td>
+      <td class="p-3 text-gray-500">${p.memberId}</td>
+      <td class="p-3 text-gray-500">${p.cardId}</td>
+      <td class="p-3 text-gray-500">${p.branchName}</td>
+      <td class="p-3 text-gray-500">${p.province}</td>
+      <td class="p-3 text-gray-400 text-xs">${p.joinedAt ? new Date(p.joinedAt).toLocaleDateString('th-TH') : '-'}</td>
+    </tr>
+  `).join('');
+}
