@@ -281,8 +281,55 @@
         <div id="wwwd-health-list" class="space-y-3"></div>
       </div>
       <div id="module-health" class="module-content hidden">
-        <p class="text-gray-400">หน้าบันทึกสุขภาพ จะทำในเฟส 4</p>
+      <h2 class="text-2xl font-black text-gray-800 mb-4">บันทึกสุขภาพ</h2>
+
+      <div class="grid grid-cols-2 gap-3 mb-4">
+        <div class="bg-white rounded-xl shadow-sm border p-4">
+          <p class="text-xs text-gray-400 font-bold uppercase">คนที่เคยกรอกข้อมูลสุขภาพ</p>
+          <p id="health-total-participants" class="text-2xl font-black theme-text mt-1">-</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border p-4">
+          <p class="text-xs text-gray-400 font-bold uppercase">จำนวนครั้งที่กรอกรวมทั้งหมด</p>
+          <p id="health-total-logs" class="text-2xl font-black text-emerald-600 mt-1">-</p>
+        </div>
       </div>
+
+      <div class="flex gap-2 mb-4">
+        <div class="relative flex-1">
+          <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm"></i>
+          <input id="health-search" type="text" class="form-input pl-9" placeholder="ค้นหาชื่อหรือรหัสสมาชิก...">
+        </div>
+        <select id="health-province-filter" class="form-input" style="width: auto;">
+          <option value="">ทุกจังหวัด</option>
+        </select>
+      </div>
+
+      <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50 text-gray-500 font-bold text-left">
+            <tr>
+              <th class="p-3">ชื่อ</th>
+              <th class="p-3">รหัสสมาชิก</th>
+              <th class="p-3">จังหวัด</th>
+              <th class="p-3">จำนวนครั้งที่กรอก</th>
+              <th class="p-3">กรอกล่าสุด</th>
+              <th class="p-3">รายละเอียด</th>
+            </tr>
+          </thead>
+          <tbody id="health-table-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- หน้ารายละเอียดประวัติสุขภาพ -->
+    <div id="module-health-detail" class="module-content hidden">
+      <button id="btn-back-health-detail" class="mb-4 text-gray-600 font-bold text-sm"><i class="fa-solid fa-arrow-left mr-1"></i>กลับไปหน้ารายชื่อ</button>
+      <h2 id="healthd-name" class="text-2xl font-black text-gray-800 mb-1">-</h2>
+      <p id="healthd-sub" class="text-sm text-gray-400 mb-4"></p>
+
+      <h3 class="text-lg font-black text-gray-800 mb-3">ประวัติการกรอกข้อมูลสุขภาพย้อนหลังทั้งหมด</h3>
+      <div id="healthd-list" class="space-y-3"></div>
+    </div>
       <div id="module-library" class="module-content hidden">
         <p class="text-gray-400">หน้าห้องสมุด จะทำในเฟส 5</p>
       </div>

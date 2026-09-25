@@ -110,6 +110,7 @@ function switchModule(name) {
   if (name === 'dashboard') loadDashboard();
   else if (name === 'waste') loadWaste();
   else if (name === 'www') loadWWW();
+  else if (name === 'health') loadHealth();
 }
 
 // ================= Dashboard ภาพรวม =================
@@ -583,3 +584,182 @@ document.getElementById('btn-back-www-detail').onclick = () => switchModule('www
         mealLogs: mealLogs.reverse()
       });
     }
+
+        // ================= บันทึกสุขภาพ =================
+
+    if (action === 'health-list') {
+      if (!hasPermission(payload.permissions, 'health')) {
+        return res.status(403).json({ error: 'ไม่มีสิทธิ์เข้าถึงข้อมูลนี้' });
+      }
+
+      const usersSnap = await adminDb.collection('users').get();
+      const healthLogsSnap = await adminDb.collectionGroup('healthLogs').get();
+
+      const summaryByUid = {};
+      healthLogsSnap.forEach(d => {
+        const uid = d.ref.parent.parent.id;
+        const log = d.data();
+        if (!summaryByUid[uid]) summaryByUid[uid] = { logCount: 0, lastLogAt: null };
+        summaryByUid[uid].logCount += 1;
+        const logDate = log.createdAt?.toDate ? log.createdAt.toDate() : null;
+        if (logDate && (!summaryByUid[uid].lastLogAt || logDate > summaryByUid[uid].lastLogAt)) {
+          summaryByUid[uid].lastLogAt = logDate;
+        }
+      });
+
+      const participants = [];
+      usersSnap.forEach(doc => {
+        const uid = doc.id;
+        if (!summaryByUid[uid]) return; // เอาเฉพาะคนที่เคยกรอกจริง
+        const u = doc.data();
+        participants.push({
+          uid,
+          name: u.name || 'ไม่ระบุชื่อ',
+          memberId: u.memberId || '-',
+          province: u.address?.prov || '-',
+          age: u.age ?? null,
+          logCount: summaryByUid[uid].logCount,
+          lastLogAt: summaryByUid[uid].lastLogAt ? summaryByUid[uid].lastLogAt.toISOString() : null
+        });
+      });
+
+      return res.status(200).json({ participants });
+    }
+
+    if (action === 'health-detail') {
+      if (!hasPermission(payload.permissions, 'health')) {
+        return res.status(403).json({ error: 'ไม่มีสิทธิ์เข้าถึงข้อมูลนี้' });
+      }
+
+      const userDoc = await adminDb.collection('users').doc(uid).get();
+      if (!userDoc.exists) return res.status(404).json({ error: 'ไม่พบข้อมูลสมาชิก' });
+      const u = userDoc.data();
+
+      const healthSnap = await adminDb.collection('users').doc(uid).collection('healthLogs').orderBy('createdAt', 'desc').get();
+
+      const healthLogs = [];
+      healthSnap.forEach(d => {
+        const h = d.data();
+        healthLogs.push({
+          id: d.id,
+          createdAt: h.createdAt?.toDate ? h.createdAt.toDate().toISOString() : null,
+          // 🔶 สมมติฐาน field ผลลัพธ์แบบฟอร์มสุขภาพ — แก้ให้ตรงจริงได้
+          weight: h.weight ?? null,
+          height: h.height ?? null,
+          bmi: h.bmi ?? null,
+          bloodPressure: h.bloodPressure ?? null,
+          cvRisk: h.cvRisk ?? null,
+          tdee: h.tdee ?? null
+        });
+      });
+
+      return res.status(200).json({
+        name: u.name || 'ไม่ระบุชื่อ',
+        memberId: u.memberId || '-',
+        province: u.address?.prov || '-',
+        age: u.age ?? null,
+        healthLogs
+      });
+    }
+
+// ================= บันทึกสุขภาพ =================
+
+let allHealthParticipants = [];
+
+async function loadHealth() {
+  try {
+    const { participants } = await callCommitteeApi('health-list');
+    allHealthParticipants = participants;
+
+    document.getElementById('health-total-participants').innerText = participants.length.toLocaleString();
+    const totalLogs = participants.reduce((sum, p) => sum + p.logCount, 0);
+    document.getElementById('health-total-logs').innerText = totalLogs.toLocaleString();
+
+    const provinces = [...new Set(participants.map(p => p.province))].filter(p => p !== '-');
+    document.getElementById('health-province-filter').innerHTML =
+      '<option value="">ทุกจังหวัด</option>' + provinces.map(p => `<option value="${p}">${p}</option>`).join('');
+
+    renderHealthTable();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+document.getElementById('health-search').oninput = () => renderHealthTable();
+document.getElementById('health-province-filter').onchange = () => renderHealthTable();
+
+function renderHealthTable() {
+  const term = document.getElementById('health-search').value.trim().toLowerCase();
+  const provFilter = document.getElementById('health-province-filter').value;
+
+  let filtered = allHealthParticipants;
+  if (term) {
+    filtered = filtered.filter(p => p.name.toLowerCase().includes(term) || p.memberId.toLowerCase().includes(term));
+  }
+  if (provFilter) {
+    filtered = filtered.filter(p => p.province === provFilter);
+  }
+
+  document.getElementById('health-table-body').innerHTML = filtered.map(p => `
+    <tr class="border-t border-gray-100">
+      <td class="p-3 font-bold text-gray-800">${p.name}</td>
+      <td class="p-3 text-gray-500">${p.memberId}</td>
+      <td class="p-3 text-gray-500">${p.province}</td>
+      <td class="p-3 text-gray-500">${p.logCount}</td>
+      <td class="p-3 text-gray-400 text-xs">${p.lastLogAt ? new Date(p.lastLogAt).toLocaleDateString('th-TH') : '-'}</td>
+      <td class="p-3">
+        <button class="text-blue-600 font-bold text-sm underline btn-view-health" data-uid="${p.uid}">ดูรายละเอียด</button>
+      </td>
+    </tr>
+  `).join('');
+
+  document.querySelectorAll('.btn-view-health').forEach(btn => {
+    btn.onclick = () => openHealthDetail(btn.dataset.uid);
+  });
+}
+
+async function openHealthDetail(uid) {
+  showLoading('กำลังโหลดข้อมูล...');
+  try {
+    const res = await fetch('/api/committee-data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: adminToken, action: 'health-detail', uid })
+    });
+    const detail = await res.json();
+    hideLoading();
+
+    if (!res.ok) { showToast(detail.error || 'โหลดข้อมูลไม่สำเร็จ', 'error'); return; }
+
+    document.getElementById('healthd-name').innerText = detail.name;
+    document.getElementById('healthd-sub').innerText = `${detail.memberId} · ${detail.province} · อายุ ${detail.age ?? '-'} ปี`;
+
+    const list = document.getElementById('healthd-list');
+    if (detail.healthLogs.length === 0) {
+      list.innerHTML = '<p class="text-gray-400 py-4">ยังไม่มีประวัติการบันทึกสุขภาพ</p>';
+    } else {
+      list.innerHTML = detail.healthLogs.map(h => `
+        <div class="bg-white rounded-xl shadow-sm border p-4">
+          <p class="text-sm text-gray-400 font-bold mb-2">${h.createdAt ? new Date(h.createdAt).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' }) : '-'}</p>
+          <div class="grid grid-cols-3 gap-3 text-sm">
+            <div><p class="text-gray-400">น้ำหนัก</p><p class="font-bold text-gray-800">${h.weight ?? '-'} กก.</p></div>
+            <div><p class="text-gray-400">ส่วนสูง</p><p class="font-bold text-gray-800">${h.height ?? '-'} ซม.</p></div>
+            <div><p class="text-gray-400">BMI</p><p class="font-bold text-gray-800">${h.bmi ?? '-'}</p></div>
+            <div><p class="text-gray-400">ความดัน</p><p class="font-bold text-gray-800">${h.bloodPressure ?? '-'}</p></div>
+            <div><p class="text-gray-400">ความเสี่ยงหัวใจ</p><p class="font-bold text-gray-800">${h.cvRisk ?? '-'}</p></div>
+            <div><p class="text-gray-400">TDEE</p><p class="font-bold text-gray-800">${h.tdee ?? '-'}</p></div>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    document.querySelectorAll('.module-tab').forEach(b => b.classList.remove('bg-white/10'));
+    document.querySelectorAll('.module-content').forEach(c => c.classList.add('hidden'));
+    document.getElementById('module-health-detail').classList.remove('hidden');
+  } catch (err) {
+    hideLoading();
+    showToast('เกิดข้อผิดพลาด กรุณาลองใหม่', 'error');
+  }
+}
+
+document.getElementById('btn-back-health-detail').onclick = () => switchModule('health');
