@@ -109,6 +109,7 @@ function switchModule(name) {
 
   if (name === 'dashboard') loadDashboard();
   else if (name === 'waste') loadWaste();
+  else if (name === 'www') loadWWW();
 }
 
 // ================= Dashboard ภาพรวม =================
@@ -353,3 +354,232 @@ document.getElementById('btn-save-waste-edit').onclick = async () => {
     showToast('เกิดข้อผิดพลาด กรุณาลองใหม่', 'error');
   }
 };
+
+// ================= Well Well Well =================
+
+let allWWWParticipants = [];
+let wwwCharts = {};
+
+async function loadWWW() {
+  try {
+    const { participants } = await callCommitteeApi('www-list');
+    allWWWParticipants = participants;
+
+    document.getElementById('www-total-participants').innerText = participants.length.toLocaleString();
+
+    const provinceCount = {};
+    participants.forEach(p => {
+      provinceCount[p.province] = (provinceCount[p.province] || 0) + 1;
+    });
+    const topProvince = Object.entries(provinceCount).sort((a, b) => b[1] - a[1])[0];
+    document.getElementById('www-top-province').innerText = topProvince ? topProvince[0] : '-';
+
+    if (wwwCharts.province) wwwCharts.province.destroy();
+    const sorted = Object.entries(provinceCount).sort((a, b) => b[1] - a[1]).slice(0, 15);
+    wwwCharts.province = new Chart(document.getElementById('chart-www-province'), {
+      type: 'bar',
+      data: { labels: sorted.map(([p]) => p), datasets: [{ data: sorted.map(([, v]) => v), backgroundColor: '#f472b6' }] },
+      options: { plugins: { legend: { display: false } } }
+    });
+
+    const provinces = [...new Set(participants.map(p => p.province))].filter(p => p !== '-');
+    document.getElementById('www-province-filter').innerHTML =
+      '<option value="">ทุกจังหวัด</option>' + provinces.map(p => `<option value="${p}">${p}</option>`).join('');
+
+    renderWWWTable();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+document.getElementById('www-search').oninput = () => renderWWWTable();
+document.getElementById('www-province-filter').onchange = () => renderWWWTable();
+
+function renderWWWTable() {
+  const term = document.getElementById('www-search').value.trim().toLowerCase();
+  const provFilter = document.getElementById('www-province-filter').value;
+
+  let filtered = allWWWParticipants;
+  if (term) {
+    filtered = filtered.filter(p => p.name.toLowerCase().includes(term) || p.memberId.toLowerCase().includes(term));
+  }
+  if (provFilter) {
+    filtered = filtered.filter(p => p.province === provFilter);
+  }
+
+  document.getElementById('www-table-body').innerHTML = filtered.map(p => `
+    <tr class="border-t border-gray-100">
+      <td class="p-3 font-bold text-gray-800">${p.name}</td>
+      <td class="p-3 text-gray-500">${p.memberId}</td>
+      <td class="p-3 text-gray-500">${p.province}</td>
+      <td class="p-3 text-gray-500">${p.age ?? '-'}</td>
+      <td class="p-3 text-gray-400 text-xs">${p.registeredAt ? new Date(p.registeredAt).toLocaleDateString('th-TH') : '-'}</td>
+      <td class="p-3">
+        <button class="text-blue-600 font-bold text-sm underline btn-view-www" data-uid="${p.uid}">ดูรายละเอียด</button>
+      </td>
+    </tr>
+  `).join('');
+
+  document.querySelectorAll('.btn-view-www').forEach(btn => {
+    btn.onclick = () => openWWWDetail(btn.dataset.uid);
+  });
+}
+
+async function openWWWDetail(uid) {
+  showLoading('กำลังโหลดข้อมูล...');
+  try {
+    const res = await fetch('/api/committee-data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: adminToken, action: 'www-detail', uid })
+    });
+    const detail = await res.json();
+    hideLoading();
+
+    if (!res.ok) { showToast(detail.error || 'โหลดข้อมูลไม่สำเร็จ', 'error'); return; }
+
+    document.getElementById('wwwd-name').innerText = detail.name;
+    document.getElementById('wwwd-sub').innerText = `${detail.memberId} · ${detail.province} · อายุ ${detail.age ?? '-'} ปี`;
+
+    if (wwwCharts.sleep) wwwCharts.sleep.destroy();
+    wwwCharts.sleep = new Chart(document.getElementById('chart-www-sleep'), {
+      type: 'line',
+      data: {
+        labels: detail.sleepLogs.map(s => s.date ? s.date.slice(5) : ''),
+        datasets: [{ data: detail.sleepLogs.map(s => s.hours), borderColor: '#818cf8', backgroundColor: 'rgba(129,140,248,0.1)', fill: true, tension: 0.3 }]
+      },
+      options: { plugins: { legend: { display: false } } }
+    });
+
+    if (wwwCharts.meal) wwwCharts.meal.destroy();
+    wwwCharts.meal = new Chart(document.getElementById('chart-www-meal'), {
+      type: 'bar',
+      data: {
+        labels: detail.mealLogs.map(m => m.date ? m.date.slice(5) : ''),
+        datasets: [{ data: detail.mealLogs.map(m => m.calories), backgroundColor: '#fb923c' }]
+      },
+      options: { plugins: { legend: { display: false } } }
+    });
+
+    const healthList = document.getElementById('wwwd-health-list');
+    if (detail.healthLogs.length === 0) {
+      healthList.innerHTML = '<p class="text-gray-400 py-4">ยังไม่มีประวัติการบันทึกสุขภาพ</p>';
+    } else {
+      healthList.innerHTML = detail.healthLogs.map(h => `
+        <div class="bg-white rounded-xl shadow-sm border p-4">
+          <p class="text-sm text-gray-400 font-bold mb-2">${h.createdAt ? new Date(h.createdAt).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' }) : '-'}</p>
+          <div class="grid grid-cols-3 gap-3 text-sm">
+            <div><p class="text-gray-400">น้ำหนัก</p><p class="font-bold text-gray-800">${h.weight ?? '-'} กก.</p></div>
+            <div><p class="text-gray-400">ส่วนสูง</p><p class="font-bold text-gray-800">${h.height ?? '-'} ซม.</p></div>
+            <div><p class="text-gray-400">BMI</p><p class="font-bold text-gray-800">${h.bmi ?? '-'}</p></div>
+            <div><p class="text-gray-400">ความดัน</p><p class="font-bold text-gray-800">${h.bloodPressure ?? '-'}</p></div>
+            <div><p class="text-gray-400">ความเสี่ยงหัวใจ</p><p class="font-bold text-gray-800">${h.cvRisk ?? '-'}</p></div>
+            <div><p class="text-gray-400">TDEE</p><p class="font-bold text-gray-800">${h.tdee ?? '-'}</p></div>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    document.querySelectorAll('.module-tab').forEach(b => b.classList.remove('bg-white/10'));
+    document.querySelectorAll('.module-content').forEach(c => c.classList.add('hidden'));
+    document.getElementById('module-www-detail').classList.remove('hidden');
+  } catch (err) {
+    hideLoading();
+    showToast('เกิดข้อผิดพลาด กรุณาลองใหม่', 'error');
+  }
+}
+
+document.getElementById('btn-back-www-detail').onclick = () => switchModule('www');
+
+    // ================= Well Well Well =================
+
+    if (action === 'www-list') {
+      if (!hasPermission(payload.permissions, 'wellWellWell')) {
+        return res.status(403).json({ error: 'ไม่มีสิทธิ์เข้าถึงข้อมูลนี้' });
+      }
+
+      const usersSnap = await adminDb.collection('users').get();
+      const participants = [];
+
+      usersSnap.forEach(doc => {
+        const u = doc.data();
+        // 🔶 สมมติฐาน: เข้าร่วม Well Well Well เช็คจาก field นี้ — แก้ให้ตรงจริงได้
+        if (!u.wwwRegistration) return;
+
+        participants.push({
+          uid: doc.id,
+          name: u.name || 'ไม่ระบุชื่อ',
+          memberId: u.memberId || '-',
+          province: u.address?.prov || '-',
+          age: u.age ?? null,
+          registeredAt: u.wwwRegistration?.registeredAt
+            ? u.wwwRegistration.registeredAt.toDate().toISOString()
+            : null
+        });
+      });
+
+      return res.status(200).json({ participants });
+    }
+
+    if (action === 'www-detail') {
+      if (!hasPermission(payload.permissions, 'wellWellWell')) {
+        return res.status(403).json({ error: 'ไม่มีสิทธิ์เข้าถึงข้อมูลนี้' });
+      }
+
+      const userDoc = await adminDb.collection('users').doc(uid).get();
+      if (!userDoc.exists) return res.status(404).json({ error: 'ไม่พบข้อมูลสมาชิก' });
+      const u = userDoc.data();
+
+      const [healthSnap, sleepSnap, mealSnap] = await Promise.all([
+        adminDb.collection('users').doc(uid).collection('healthLogs').orderBy('createdAt', 'desc').get(),
+        adminDb.collection('users').doc(uid).collection('sleepLogs').orderBy('createdAt', 'desc').limit(30).get(),
+        adminDb.collection('users').doc(uid).collection('mealLogs').orderBy('createdAt', 'desc').limit(30).get()
+      ]);
+
+      const healthLogs = [];
+      healthSnap.forEach(d => {
+        const h = d.data();
+        healthLogs.push({
+          id: d.id,
+          createdAt: h.createdAt?.toDate ? h.createdAt.toDate().toISOString() : null,
+          // 🔶 สมมติฐาน: field ผลลัพธ์แบบฟอร์มสุขภาพ — แก้ให้ตรงจริงได้
+          weight: h.weight ?? null,
+          height: h.height ?? null,
+          bmi: h.bmi ?? null,
+          bloodPressure: h.bloodPressure ?? null,
+          cvRisk: h.cvRisk ?? null,
+          tdee: h.tdee ?? null
+        });
+      });
+
+      const sleepLogs = [];
+      sleepSnap.forEach(d => {
+        const s = d.data();
+        sleepLogs.push({
+          date: s.date || (s.createdAt?.toDate ? s.createdAt.toDate().toISOString().slice(0, 10) : null),
+          // 🔶 สมมติฐาน: ชั่วโมงนอน
+          hours: s.hours ?? s.sleepHours ?? null
+        });
+      });
+
+      const mealLogs = [];
+      mealSnap.forEach(d => {
+        const m = d.data();
+        mealLogs.push({
+          date: m.date || (m.createdAt?.toDate ? m.createdAt.toDate().toISOString().slice(0, 10) : null),
+          // 🔶 สมมติฐาน: แคลอรี่ที่กิน
+          calories: m.calories ?? null,
+          mealName: m.mealName || m.name || '-'
+        });
+      });
+
+      return res.status(200).json({
+        name: u.name || 'ไม่ระบุชื่อ',
+        memberId: u.memberId || '-',
+        province: u.address?.prov || '-',
+        age: u.age ?? null,
+        healthLogs,
+        sleepLogs: sleepLogs.reverse(),
+        mealLogs: mealLogs.reverse()
+      });
+    }
