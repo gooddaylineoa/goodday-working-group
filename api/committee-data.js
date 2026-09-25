@@ -16,13 +16,18 @@ if (!getApps().length) {
 
 const adminDb = getFirestore();
 
+function hasPermission(permissions, page) {
+  return permissions.includes('all') || permissions.includes(page);
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'ใช้ได้เฉพาะ POST เท่านั้น' });
 
-  const { token, action } = req.body;
+  const { token, action, data, uid } = req.body;
 
+  let payload;
   try {
-    jwt.verify(token, process.env.ADMIN_JWT_SECRET);
+    payload = jwt.verify(token, process.env.ADMIN_JWT_SECRET);
   } catch (err) {
     return res.status(403).json({ error: 'session หมดอายุ กรุณาเข้าสู่ระบบใหม่' });
   }
@@ -70,7 +75,6 @@ export default async function handler(req, res) {
           if (memberDaily[dateKey] !== undefined) memberDaily[dateKey]++;
         }
 
-        // 🔶 สมมติฐาน: เข้าร่วม Well Well Well เช็คจาก field นี้ — แก้ชื่อ field ให้ตรงจริงได้
         if (data.wwwRegistration) wwwParticipants++;
 
         if (data.libraryMember?.joined && data.libraryMember?.branchName) {
@@ -88,6 +92,71 @@ export default async function handler(req, res) {
         wwwParticipants,
         libraryBranchCount
       });
+    }
+
+    // ================= Waste to Wealth =================
+
+    if (action === 'waste-list') {
+      if (!hasPermission(payload.permissions, 'wasteToWealth')) {
+        return res.status(403).json({ error: 'ไม่มีสิทธิ์เข้าถึงข้อมูลนี้' });
+      }
+
+      const usersSnap = await adminDb.collection('users').get();
+      const wasteLogsSnap = await adminDb.collectionGroup('wasteLogs').get();
+
+      // รวมยอดขยะ+แต้ม แยกตาม uid
+      const wasteByUid = {};
+      wasteLogsSnap.forEach(d => {
+        const uid = d.ref.parent.parent.id;
+        const log = d.data();
+        if (!wasteByUid[uid]) wasteByUid[uid] = { totalAmount: 0, logCount: 0, lastLogAt: null };
+        wasteByUid[uid].totalAmount += log.amount || 0;
+        wasteByUid[uid].logCount += 1;
+        const logDate = log.createdAt?.toDate ? log.createdAt.toDate() : null;
+        if (logDate && (!wasteByUid[uid].lastLogAt || logDate > wasteByUid[uid].lastLogAt)) {
+          wasteByUid[uid].lastLogAt = logDate;
+        }
+      });
+
+      const participants = [];
+      usersSnap.forEach(doc => {
+        const uid = doc.id;
+        if (!wasteByUid[uid]) return; // เอาเฉพาะคนที่มีข้อมูลขยะจริง
+        const u = doc.data();
+        participants.push({
+          uid,
+          name: u.name || 'ไม่ระบุชื่อ',
+          memberId: u.memberId || '-',
+          phone: u.phone || '-',
+          province: u.address?.prov || '-',
+          district: u.address?.dist || '-',
+          subdistrict: u.address?.subdist || '-',
+          totalAmount: wasteByUid[uid].totalAmount,
+          logCount: wasteByUid[uid].logCount,
+          lastLogAt: wasteByUid[uid].lastLogAt ? wasteByUid[uid].lastLogAt.toISOString() : null
+        });
+      });
+
+      // สรุปยอดรวมแยกจังหวัด (ใช้ทำกราฟ)
+      const provinceAmountSummary = {};
+      participants.forEach(p => {
+        provinceAmountSummary[p.province] = (provinceAmountSummary[p.province] || 0) + p.totalAmount;
+      });
+
+      return res.status(200).json({ participants, provinceAmountSummary });
+    }
+
+    if (action === 'waste-update') {
+      if (!hasPermission(payload.permissions, 'wasteToWealth')) {
+        return res.status(403).json({ error: 'ไม่มีสิทธิ์แก้ไขข้อมูลนี้' });
+      }
+      // แก้ไขข้อมูลที่อยู่ของผู้เข้าร่วม (จุดที่คณะทำงานแก้ไขได้จริงตอนนี้)
+      await adminDb.collection('users').doc(uid).update({
+        'address.prov': data.province,
+        'address.dist': data.district,
+        'address.subdist': data.subdistrict
+      });
+      return res.status(200).json({ success: true });
     }
 
     return res.status(400).json({ error: 'ไม่รู้จัก action นี้' });

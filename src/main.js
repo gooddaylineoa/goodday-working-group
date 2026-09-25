@@ -108,6 +108,7 @@ function switchModule(name) {
   document.getElementById(`module-${name}`).classList.remove('hidden');
 
   if (name === 'dashboard') loadDashboard();
+  else if (name === 'waste') loadWaste();
 }
 
 // ================= Dashboard ภาพรวม =================
@@ -233,3 +234,122 @@ function renderLibraryBranchChart(libraryBranchCount) {
     options: { plugins: { legend: { display: false } } }
   });
 }
+
+// ================= Waste to Wealth =================
+
+let allWasteParticipants = [];
+let wasteCharts = {};
+
+async function loadWaste() {
+  try {
+    const { participants, provinceAmountSummary } = await callCommitteeApi('waste-list');
+    allWasteParticipants = participants;
+
+    document.getElementById('waste-total-participants').innerText = participants.length.toLocaleString();
+    const totalAmount = participants.reduce((sum, p) => sum + p.totalAmount, 0);
+    document.getElementById('waste-total-amount').innerText = totalAmount.toLocaleString();
+
+    const topProvince = Object.entries(provinceAmountSummary).sort((a, b) => b[1] - a[1])[0];
+    document.getElementById('waste-top-province').innerText = topProvince ? topProvince[0] : '-';
+
+    if (wasteCharts.province) wasteCharts.province.destroy();
+    const sorted = Object.entries(provinceAmountSummary).sort((a, b) => b[1] - a[1]).slice(0, 15);
+    wasteCharts.province = new Chart(document.getElementById('chart-waste-province'), {
+      type: 'bar',
+      data: { labels: sorted.map(([p]) => p), datasets: [{ data: sorted.map(([, v]) => v), backgroundColor: '#10b981' }] },
+      options: { plugins: { legend: { display: false } } }
+    });
+
+    const provinces = [...new Set(participants.map(p => p.province))].filter(p => p !== '-');
+    document.getElementById('waste-province-filter').innerHTML =
+      '<option value="">ทุกจังหวัด</option>' + provinces.map(p => `<option value="${p}">${p}</option>`).join('');
+
+    renderWasteTable();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+document.getElementById('waste-search').oninput = () => renderWasteTable();
+document.getElementById('waste-province-filter').onchange = () => renderWasteTable();
+
+function renderWasteTable() {
+  const term = document.getElementById('waste-search').value.trim().toLowerCase();
+  const provFilter = document.getElementById('waste-province-filter').value;
+
+  let filtered = allWasteParticipants;
+  if (term) {
+    filtered = filtered.filter(p => p.name.toLowerCase().includes(term) || p.memberId.toLowerCase().includes(term));
+  }
+  if (provFilter) {
+    filtered = filtered.filter(p => p.province === provFilter);
+  }
+
+  const canEdit = myPermissions.includes('all') || myPermissions.includes('wasteToWealth');
+
+  document.getElementById('waste-table-body').innerHTML = filtered.map(p => `
+    <tr class="border-t border-gray-100">
+      <td class="p-3 font-bold text-gray-800">${p.name}</td>
+      <td class="p-3 text-gray-500">${p.memberId}</td>
+      <td class="p-3 text-gray-500">${p.province} / ${p.district}</td>
+      <td class="p-3 font-bold text-emerald-600">${p.totalAmount.toLocaleString()}</td>
+      <td class="p-3 text-gray-500">${p.logCount}</td>
+      <td class="p-3 text-gray-400 text-xs">${p.lastLogAt ? new Date(p.lastLogAt).toLocaleDateString('th-TH') : '-'}</td>
+      <td class="p-3">
+        ${canEdit ? `<button class="text-blue-600 font-bold text-sm underline btn-edit-waste" data-uid="${p.uid}">แก้ไข</button>` : '-'}
+      </td>
+    </tr>
+  `).join('');
+
+  document.querySelectorAll('.btn-edit-waste').forEach(btn => {
+    btn.onclick = () => openWasteEditModal(btn.dataset.uid);
+  });
+}
+
+function openWasteEditModal(uid) {
+  const p = allWasteParticipants.find(x => x.uid === uid);
+  if (!p) return;
+
+  document.getElementById('waste-edit-uid').value = uid;
+  document.getElementById('waste-edit-name').innerText = p.name;
+  document.getElementById('waste-edit-province').value = p.province === '-' ? '' : p.province;
+  document.getElementById('waste-edit-district').value = p.district === '-' ? '' : p.district;
+  document.getElementById('waste-edit-subdistrict').value = p.subdistrict === '-' ? '' : p.subdistrict;
+
+  document.getElementById('waste-edit-modal').classList.remove('hidden');
+  document.getElementById('waste-edit-modal').classList.add('flex');
+}
+
+document.getElementById('btn-close-waste-edit').onclick = () => {
+  document.getElementById('waste-edit-modal').classList.add('hidden');
+  document.getElementById('waste-edit-modal').classList.remove('flex');
+};
+
+document.getElementById('btn-save-waste-edit').onclick = async () => {
+  const uid = document.getElementById('waste-edit-uid').value;
+  const data = {
+    province: document.getElementById('waste-edit-province').value.trim(),
+    district: document.getElementById('waste-edit-district').value.trim(),
+    subdistrict: document.getElementById('waste-edit-subdistrict').value.trim()
+  };
+
+  showLoading('กำลังบันทึก...');
+  try {
+    const res = await fetch('/api/committee-data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: adminToken, action: 'waste-update', uid, data })
+    });
+    const result = await res.json();
+    hideLoading();
+
+    if (!res.ok) { showToast(result.error || 'บันทึกไม่สำเร็จ', 'error'); return; }
+
+    showToast('บันทึกสำเร็จ!', 'success');
+    document.getElementById('btn-close-waste-edit').click();
+    loadWaste();
+  } catch (err) {
+    hideLoading();
+    showToast('เกิดข้อผิดพลาด กรุณาลองใหม่', 'error');
+  }
+};
